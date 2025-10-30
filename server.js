@@ -320,7 +320,12 @@ async function askKpi(){
   if(!r.ok){ alert(j.error||'MCP error'); return; }
   const d = j.data || j;
   if(d.avgLatency!==undefined){
-    el('kpi').textContent = `total ${d.total} · delivered ${d.delivered} · failed ${d.failed} · blocked ${d.blocked} · avgLatency ${d.avgLatency.toFixed(0)}ms`;
+    el('kpi').textContent =
+  'total ' + d.total +
+  ' · delivered ' + d.delivered +
+  ' · failed ' + d.failed +
+  ' · blocked ' + d.blocked +
+  ' · avgLatency ' + d.avgLatency.toFixed(0) + 'ms';
   } else {
     el('kpi').textContent = 'See console for MCP data';
     console.log('MCP result', j);
