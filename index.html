@@ -46,7 +46,7 @@ th,td{padding:8px;border-bottom:1px solid #223;text-align:left}
 </div>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const $ = id => document.getElementById(id);
+  const $ = sel => document.querySelector(sel);
 
   async function api(path, method='GET', body) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
