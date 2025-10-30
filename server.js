@@ -286,7 +286,7 @@ function showApp(){
 
 function rowHtml(r){
   const dt = new Date(r.timestamp);
-  return `<tr><td>${dt.toLocaleString()}</td><td>${r.country}</td><td>${r.status}</td><td>${r.carrier}</td><td>${r.latency_ms}</td></tr>`;
+  return '<tr><td>' + dt.toLocaleString() + '</td><td>' + r.country + '</td><td>' + r.status + '</td><td>' + r.carrier + '</td><td>' + r.latency_ms + '</td></tr>';
 }
 
 async function loadSms(){
