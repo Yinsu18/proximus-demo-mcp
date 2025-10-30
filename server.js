@@ -123,7 +123,6 @@ app.post("/api/mcp/query", requireAuth, async (req, res) => {
 });
 
 // ---- Static UI ----
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(__dirname));
 app.get("/healthz", (req, res) => res.send("ok"));
-
 app.listen(PORT, () => console.log(`demo-app running on port ${PORT}`));
