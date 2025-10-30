@@ -45,23 +45,61 @@ th,td{padding:8px;border-bottom:1px solid #223;text-align:left}
   </div>
 </div>
 <script>
-const $ = id=>document.getElementById(id);
-async function api(path,method='GET',body){
-  const opts={method,headers:{'Content-Type':'application/json'}};
-  if(body)opts.body=JSON.stringify(body);
-  const r=await fetch(path,opts);
-  const j=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(j.error||JSON.stringify(j));
-  return j;
-}
-function row(r){const dt=new Date(r.timestamp);return '<tr><td>'+dt.toLocaleString()+'</td><td>'+r.country+'</td><td>'+r.status+'</td><td>'+r.carrier+'</td><td>'+r.latency_ms+'</td></tr>';}
-async function login(){await api('/api/login','POST',{username:$('#u').value,password:$('#p').value});showApp();}
-async function logout(){await api('/api/logout','POST');location.reload();}
-function showApp(){$('#login').style.display='none';$('#app').style.display='block';}
-async function loadData(){const qs=new URLSearchParams();if($('#country').value)qs.set('country',$('#country').value);if($('#status').value)qs.set('status',$('#status').value);const j=await api('/api/data?'+qs.toString());$('#tbody').innerHTML=j.map(row).join('');}
-async function askMcp(){const filters={};if($('#country').value)filters.country=$('#country').value;if($('#status').value)filters.status=$('#status').value;const j=await api('/api/mcp/query','POST',{prompt:'Compute KPIs',resource:'kpis',filters});const d=j.data||j;$('#kpi').textContent='total '+d.total+' · delivered '+d.delivered+' · failed '+d.failed+' · blocked '+d.blocked+' · avgLatency '+Math.round(d.avgLatency)+'ms';}
-$('#btnLogin').onclick=login;$('#btnLogout').onclick=logout;$('#btnLoad').onclick=loadData;$('#btnAsk').onclick=askMcp;
-fetch('/api/me').then(r=>r.json()).then(j=>{if(j.authenticated)showApp();});
+document.addEventListener("DOMContentLoaded", () => {
+  const $ = id => document.getElementById(id);
+
+  async function api(path, method='GET', body) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(path, opts);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || JSON.stringify(j));
+    return j;
+  }
+
+  function row(r) {
+    const dt = new Date(r.timestamp);
+    return `<tr><td>${dt.toLocaleString()}</td><td>${r.country}</td><td>${r.status}</td><td>${r.carrier}</td><td>${r.latency_ms}</td></tr>`;
+  }
+
+  async function login() {
+    await api('/api/login', 'POST', {
+      username: $('#u').value,
+      password: $('#p').value
+    });
+    showApp();
+  }
+
+  async function logout() { await api('/api/logout', 'POST'); location.reload(); }
+  function showApp() { $('#login').style.display = 'none'; $('#app').style.display = 'block'; }
+
+  async function loadData() {
+    const qs = new URLSearchParams();
+    if ($('#country').value) qs.set('country', $('#country').value);
+    if ($('#status').value) qs.set('status', $('#status').value);
+    const j = await api('/api/data?' + qs.toString());
+    $('#tbody').innerHTML = j.map(row).join('');
+  }
+
+  async function askMcp() {
+    const filters = {};
+    if ($('#country').value) filters.country = $('#country').value;
+    if ($('#status').value) filters.status = $('#status').value;
+    const j = await api('/api/mcp/query', 'POST', {
+      prompt: 'Compute KPIs', resource: 'kpis', filters
+    });
+    const d = j.data || j;
+    $('#kpi').textContent = `total ${d.total} · delivered ${d.delivered} · failed ${d.failed} · blocked ${d.blocked} · avgLatency ${Math.round(d.avgLatency)}ms`;
+  }
+
+  $('#btnLogin').onclick = login;
+  $('#btnLogout').onclick = logout;
+  $('#btnLoad').onclick = loadData;
+  $('#btnAsk').onclick = askMcp;
+
+  fetch('/api/me').then(r => r.json()).then(j => { if (j.authenticated) showApp(); });
+});
 </script>
+
 </body>
 </html>
