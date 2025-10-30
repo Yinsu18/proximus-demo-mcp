@@ -8,7 +8,7 @@ info:
     Recommended to call this **indirectly** via the MCP. If you want ChatGPT to call it directly,
     enable the optional API key bypass described below (X-API-Key header).
 servers:
-  - url: https://YOUR-DEMO.onrender.com
+  - url: https://proximus-mcp.onrender.com
 paths:
   /api/data:
     get:
