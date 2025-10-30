@@ -165,23 +165,11 @@ const MCP_API_KEY = process.env.MCP_API_KEY || null;
 app.post('/api/mcp/query', requireAuth, async (req, res) => {
   const { prompt, resource, filters } = req.body || {};
   try {
-    if (MCP_URL) {
-      const resp = await fetch(MCP_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(MCP_API_KEY ? { 'Authorization': `Bearer ${MCP_API_KEY}` } : {})
-        },
-        body: JSON.stringify({ prompt, resource, filters })
-      });
-      const data = await resp.json();
-      return res.json({ source: 'proximus-mcp', data });
-    } else {
-      // Mock behavior: interpret filters against our dummy smsData
+    if (!MCP_URL) {
+      // Mock path (unchanged)
       let out = smsData;
       if (filters?.country) out = out.filter(r => r.country === String(filters.country).toUpperCase());
       if (filters?.status) out = out.filter(r => r.status === String(filters.status).toUpperCase());
-      // Basic aggregation example
       if (resource === 'kpis') {
         const total = out.length;
         const delivered = out.filter(r=>r.status==='DELIVERED').length;
@@ -192,9 +180,34 @@ app.post('/api/mcp/query', requireAuth, async (req, res) => {
       }
       return res.json({ source: 'mock-mcp', data: out.slice(0, 200) });
     }
+
+    const resp = await fetch(MCP_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        ...(MCP_API_KEY ? { 'Authorization': `Bearer ${MCP_API_KEY}` } : {})
+      },
+      body: JSON.stringify({ prompt, resource, filters })
+    });
+
+    // Try to parse JSON; if not JSON, read text for better error report
+    const ct = resp.headers.get('content-type') || '';
+    const isJson = ct.includes('application/json');
+
+    if (!resp.ok) {
+      const body = isJson ? await resp.json().catch(() => ({})) : await resp.text();
+      const details = isJson ? JSON.stringify(body) : body;
+      return res.status(502).json({
+        error: 'MCP bridge failed',
+        details: `Upstream ${resp.status} ${resp.statusText}: ${details}`.slice(0, 2000)
+      });
+    }
+
+    const data = isJson ? await resp.json() : { raw: await resp.text() };
+    return res.json({ source: 'proximus-mcp', data });
   } catch (e) {
-    console.error('MCP error', e);
-    res.status(502).json({ error: 'MCP bridge failed', details: String(e?.message||e) });
+    return res.status(502).json({ error: 'MCP bridge failed', details: String(e && e.message || e) });
   }
 });
 
