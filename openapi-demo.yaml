@@ -1,0 +1,155 @@
+# ---------- Part 1: OpenAPI spec for the demo app ----------
+openapi: 3.1.0
+info:
+  title: Proximus Demo App API
+  version: 1.0.0
+  description: |
+    API for the Proximus demo web app. Provides access to the tabular data that powers the page.
+    Recommended to call this **indirectly** via the MCP. If you want ChatGPT to call it directly,
+    enable the optional API key bypass described below (X-API-Key header).
+servers:
+  - url: https://YOUR-DEMO.onrender.com
+paths:
+  /api/data:
+    get:
+      operationId: getDemoData
+      summary: Get demo records (table data)
+      security:
+        - cookieAuth: []
+        - xApiKey: []
+      parameters:
+        - in: query
+          name: country
+          schema: { type: string }
+          description: Optional 2-letter country code filter.
+        - in: query
+          name: status
+          schema: { type: string, enum: [DELIVERED, FAILED, BLOCKED, PENDING] }
+          description: Optional delivery status filter.
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100, minimum: 1, maximum: 1000 }
+          description: Max number of rows to return.
+      responses:
+        '200':
+          description: Array of records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Record'
+        '401':
+          description: Unauthorized (no session or API key)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/mcp/query:
+    post:
+      operationId: proxyToMcp
+      summary: Bridge that forwards requests to the MCP
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpQuery'
+      responses:
+        '200':
+          description: MCP response passthrough
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/KpisEnvelope' }
+                  - { $ref: '#/components/schemas/RecordsEnvelope' }
+        '401':
+          description: Unauthorized (login first)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+    xApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    Record:
+      type: object
+      properties:
+        id: { type: integer }
+        country: { type: string }
+        status: { type: string, enum: [DELIVERED, FAILED, BLOCKED, PENDING] }
+        carrier: { type: string }
+        latency_ms: { type: integer }
+        message: { type: string }
+        timestamp: { type: integer, description: Unix ms }
+      required: [id, country, status, carrier, latency_ms, message, timestamp]
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        details: { type: string }
+    McpQuery:
+      type: object
+      properties:
+        prompt: { type: string }
+        resource: { type: string, enum: [kpis, records] }
+        filters:
+          type: object
+          properties:
+            country: { type: string }
+            status: { type: string, enum: [DELIVERED, FAILED, BLOCKED, PENDING] }
+      required: [resource]
+    KpisEnvelope:
+      type: object
+      properties:
+        ok: { type: boolean }
+        data:
+          type: object
+          properties:
+            total: { type: integer }
+            delivered: { type: integer }
+            failed: { type: integer }
+            blocked: { type: integer }
+            avgLatency: { type: number }
+          required: [total, delivered, failed, blocked, avgLatency]
+    RecordsEnvelope:
+      type: object
+      properties:
+        ok: { type: boolean }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Record' }
+
+---
+# ---------- Part 2: Minimal code patch (adds X-API-Key bypass) ----------
+# Apply these edits to demo-app/server.js so MCP (and Actions) can read /api/data without a browser session.
+# 1) Add near the top:
+#   const DEMO_API_KEY = process.env.DEMO_API_KEY || null;
+# 2) Replace the /api/data handler with this version:
+#
+# app.get('/api/data', (req, res) => {
+#   // Allow either a logged-in session OR a valid X-API-Key
+#   const apiKey = req.get('X-API-Key');
+#   const authed = !!(req.session && req.session.user) || (DEMO_API_KEY && apiKey === DEMO_API_KEY);
+#   if (!authed) return res.status(401).json({ error: 'Unauthorized' });
+#
+#   let out = DATA;
+#   const { country, status, limit } = req.query;
+#   if (country) out = out.filter(r => r.country === String(country).toUpperCase());
+#   if (status) out = out.filter(r => r.status === String(status).toUpperCase());
+#   const lim = Math.min(parseInt(limit,10)||100, 1000);
+#   res.json(out.slice(0, lim));
+# });
+#
+# 3) In Render for the demo app, add env var: DEMO_API_KEY=<random-long-string>
+# 4) In the MCP service, add env var: DEMO_API_KEY=<same value>, and send it when calling the demo app:
+#    fetch(url, { headers: { 'Accept':'application/json', 'X-API-Key': process.env.DEMO_API_KEY } })
