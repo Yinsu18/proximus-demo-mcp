@@ -330,7 +330,7 @@ async function askKpi(){
 el('btnLogin').onclick = login;
 el('btnLogout').onclick = logout;
 
-ele('btnLoad')?.addEventListener('click', loadSms);
+el('btnLoad')?.addEventListener('click', loadSms);   // ← FIXED: was 'ele(' instead of 'el('
 el('btnStream').onclick = startStream;
 el('btnStop').onclick = stopStream;
 el('btnKpi').onclick = askKpi;
