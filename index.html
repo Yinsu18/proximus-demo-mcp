@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Proximus Demo</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0b1020;color:#e6e8ef;margin:0}
+.wrap{max-width:900px;margin:40px auto;padding:16px}
+.card{background:#121933;border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+input,button,select{padding:10px 12px;border-radius:10px;border:1px solid #2a355b;background:#0f1429;color:#e6e8ef}
+button{cursor:pointer;background:#4c7dff;border-color:#4c7dff;font-weight:600}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th,td{padding:8px;border-bottom:1px solid #223;text-align:left}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pill{display:inline-block;padding:2px 8px;border:1px solid #2e3b6e;border-radius:999px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h2>Proximus Demo</h2>
+    <div id="login">
+      <div class="row">
+        <input id="u" placeholder="username" value="proximus" />
+        <input id="p" placeholder="password" type="password" value="proximus123" />
+        <button id="btnLogin">Login</button>
+      </div>
+      <p>Log in, then load data & ask MCP.</p>
+    </div>
+    <div id="app" style="display:none">
+      <div class="row">
+        <button id="btnLogout">Logout</button>
+        <select id="country"><option value="">All Countries</option><option>US</option><option>GB</option><option>DE</option><option>FR</option><option>BR</option><option>IN</option><option>MX</option><option>CO</option><option>ES</option><option>IT</option></select>
+        <select id="status"><option value="">All Statuses</option><option>DELIVERED</option><option>FAILED</option><option>BLOCKED</option><option>PENDING</option></select>
+        <button id="btnLoad">Load Data</button>
+        <button id="btnAsk">Ask MCP summary</button>
+      </div>
+      <p id="kpi" class="pill"></p>
+      <table>
+        <thead><tr><th>Time</th><th>Country</th><th>Status</th><th>Carrier</th><th>Latency (ms)</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script>
+const $ = id=>document.getElementById(id);
+async function api(path,method='GET',body){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(body)opts.body=JSON.stringify(body);
+  const r=await fetch(path,opts);
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||JSON.stringify(j));
+  return j;
+}
+function row(r){const dt=new Date(r.timestamp);return '<tr><td>'+dt.toLocaleString()+'</td><td>'+r.country+'</td><td>'+r.status+'</td><td>'+r.carrier+'</td><td>'+r.latency_ms+'</td></tr>';}
+async function login(){await api('/api/login','POST',{username:$('#u').value,password:$('#p').value});showApp();}
+async function logout(){await api('/api/logout','POST');location.reload();}
+function showApp(){$('#login').style.display='none';$('#app').style.display='block';}
+async function loadData(){const qs=new URLSearchParams();if($('#country').value)qs.set('country',$('#country').value);if($('#status').value)qs.set('status',$('#status').value);const j=await api('/api/data?'+qs.toString());$('#tbody').innerHTML=j.map(row).join('');}
+async function askMcp(){const filters={};if($('#country').value)filters.country=$('#country').value;if($('#status').value)filters.status=$('#status').value;const j=await api('/api/mcp/query','POST',{prompt:'Compute KPIs',resource:'kpis',filters});const d=j.data||j;$('#kpi').textContent='total '+d.total+' · delivered '+d.delivered+' · failed '+d.failed+' · blocked '+d.blocked+' · avgLatency '+Math.round(d.avgLatency)+'ms';}
+$('#btnLogin').onclick=login;$('#btnLogout').onclick=logout;$('#btnLoad').onclick=loadData;$('#btnAsk').onclick=askMcp;
+fetch('/api/me').then(r=>r.json()).then(j=>{if(j.authenticated)showApp();});
+</script>
+</body>
+</html>
