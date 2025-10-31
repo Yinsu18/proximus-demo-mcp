@@ -1,20 +1,24 @@
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Proximus Demo</title>
-<style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0b1020;color:#e6e8ef;margin:0}
-.wrap{max-width:900px;margin:40px auto;padding:16px}
-.card{background:#121933;border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.35)}
-input,button,select{padding:10px 12px;border-radius:10px;border:1px solid #2a355b;background:#0f1429;color:#e6e8ef}
-button{cursor:pointer;background:#4c7dff;border-color:#4c7dff;font-weight:600}
-table{width:100%;border-collapse:collapse;margin-top:12px}
-th,td{padding:8px;border-bottom:1px solid #223;text-align:left}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.pill{display:inline-block;padding:2px 8px;border:1px solid #2e3b6e;border-radius:999px;font-size:12px}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Proximus Demo</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0b1020;color:#e6e8ef;margin:0}
+    .wrap{max-width:1000px;margin:40px auto;padding:16px}
+    .card{background:#121933;border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.35);margin-bottom:16px}
+    input,button,select,textarea{padding:10px 12px;border-radius:10px;border:1px solid #2a355b;background:#0f1429;color:#e6e8ef}
+    button{cursor:pointer;background:#4c7dff;border-color:#4c7dff;font-weight:600}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px;border-bottom:1px solid #223;text-align:left}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #2e3b6e;border-radius:999px;font-size:12px}
+    .muted{opacity:.85}
+    #chartWrap{background:#0f1429;border:1px dashed #2a355b;border-radius:12px;padding:12px;margin-top:12px}
+  </style>
+  <!-- Chart.js (for on-page charts) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -26,80 +30,201 @@ th,td{padding:8px;border-bottom:1px solid #223;text-align:left}
         <input id="p" placeholder="password" type="password" value="proximus123" />
         <button id="btnLogin">Login</button>
       </div>
-      <p>Log in, then load data & ask MCP.</p>
+      <p class="muted">Log in, then load data, or ask a question like:
+        <br>• <code>kpis for CO</code>
+        <br>• <code>show failed records for GB limit 50</code>
+        <br>• <code>chart latency by status for CO</code>
+      </p>
     </div>
+
     <div id="app" style="display:none">
       <div class="row">
         <button id="btnLogout">Logout</button>
         <select id="country"><option value="">All Countries</option><option>US</option><option>GB</option><option>DE</option><option>FR</option><option>BR</option><option>IN</option><option>MX</option><option>CO</option><option>ES</option><option>IT</option></select>
         <select id="status"><option value="">All Statuses</option><option>DELIVERED</option><option>FAILED</option><option>BLOCKED</option><option>PENDING</option></select>
         <button id="btnLoad">Load Data</button>
-        <button id="btnAsk">Ask MCP summary</button>
+        <span id="kpi" class="pill"></span>
       </div>
-      <p id="kpi" class="pill"></p>
-      <table>
-        <thead><tr><th>Time</th><th>Country</th><th>Status</th><th>Carrier</th><th>Latency (ms)</th></tr></thead>
-        <tbody id="tbody"></tbody>
-      </table>
+
+      <div class="card" style="margin-top:16px">
+        <h3>Ask about the data</h3>
+        <div class="row" style="align-items:flex-start">
+          <textarea id="q" rows="3" style="flex:1" placeholder="e.g., kpis for CO / show failed records for GB limit 50 / chart latency by status for CO"></textarea>
+          <button id="btnAsk" style="height:fit-content">Run</button>
+        </div>
+        <div id="answer" class="muted" style="margin-top:8px"></div>
+        <div id="chartWrap" style="display:none">
+          <canvas id="chart" height="140"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Records</h3>
+        <table>
+          <thead><tr><th>Time</th><th>Country</th><th>Status</th><th>Carrier</th><th>Latency (ms)</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 </div>
+
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const $ = sel => document.querySelector(sel);
 
-  async function api(path, method='GET', body) {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
-    if (body) opts.body = JSON.stringify(body);
+  async function api(path, method='GET', body){
+    const opts = { method, headers:{'Content-Type':'application/json'} };
+    if(body) opts.body = JSON.stringify(body);
     const r = await fetch(path, opts);
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || JSON.stringify(j));
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error || JSON.stringify(j));
     return j;
   }
 
-  function row(r) {
+  function row(r){
     const dt = new Date(r.timestamp);
-    return `<tr><td>${dt.toLocaleString()}</td><td>${r.country}</td><td>${r.status}</td><td>${r.carrier}</td><td>${r.latency_ms}</td></tr>`;
+    return '<tr><td>'+dt.toLocaleString()+'</td><td>'+r.country+'</td><td>'+r.status+'</td><td>'+r.carrier+'</td><td>'+r.latency_ms+'</td></tr>';
   }
 
-  async function login() {
-    await api('/api/login', 'POST', {
-      username: $('#u').value,
-      password: $('#p').value
-    });
+  async function login(){
+    await api('/api/login','POST',{username:$('#u').value, password:$('#p').value});
     showApp();
   }
+  async function logout(){ await api('/api/logout','POST'); location.reload(); }
+  function showApp(){ $('#login').style.display='none'; $('#app').style.display='block'; }
 
-  async function logout() { await api('/api/logout', 'POST'); location.reload(); }
-  function showApp() { $('#login').style.display = 'none'; $('#app').style.display = 'block'; }
-
-  async function loadData() {
+  async function loadData(){
     const qs = new URLSearchParams();
-    if ($('#country').value) qs.set('country', $('#country').value);
-    if ($('#status').value) qs.set('status', $('#status').value);
-    const j = await api('/api/data?' + qs.toString());
+    if($('#country').value) qs.set('country',$('#country').value);
+    if($('#status').value) qs.set('status',$('#status').value);
+    const j = await api('/api/data?'+qs.toString());
     $('#tbody').innerHTML = j.map(row).join('');
+    // show quick KPIs of loaded table
+    const k = computeKpis(j);
+    $('#kpi').textContent = 'total '+k.total+' · delivered '+k.delivered+' · failed '+k.failed+' · blocked '+k.blocked+' · avgLatency '+Math.round(k.avgLatency)+'ms';
   }
 
-  async function askMcp() {
+  function computeKpis(rows){
+    const total = rows.length;
+    const delivered = rows.filter(r=>r.status==='DELIVERED').length;
+    const failed = rows.filter(r=>r.status==='FAILED').length;
+    const blocked = rows.filter(r=>r.status==='BLOCKED').length;
+    const avgLatency = total ? rows.reduce((a,b)=>a+b.latency_ms,0)/total : 0;
+    return { total, delivered, failed, blocked, avgLatency };
+  }
+
+  // --- Q&A engine (very small NL → action parser) ---
+  async function ask(){
+    const q = ($('#q').value || '').trim().toLowerCase();
+    if(!q){ $('#answer').textContent = 'Type a question.'; return; }
+
+    // Parse filters
+    const mCountry = q.match(/\bfor\s+([a-z]{2})\b/);               // e.g., "for CO"
+    const mStatus  = q.match(/\b(delivered|failed|blocked|pending)\b/);
+    const mLimit   = q.match(/\blimit\s+(\d{1,4})\b/);
+
     const filters = {};
-    if ($('#country').value) filters.country = $('#country').value;
-    if ($('#status').value) filters.status = $('#status').value;
-    const j = await api('/api/mcp/query', 'POST', {
-      prompt: 'Compute KPIs', resource: 'kpis', filters
-    });
-    const d = j.data || j;
-    $('#kpi').textContent = `total ${d.total} · delivered ${d.delivered} · failed ${d.failed} · blocked ${d.blocked} · avgLatency ${Math.round(d.avgLatency)}ms`;
+    if(mCountry) filters.country = mCountry[1].toUpperCase();
+    if(mStatus)  filters.status  = mStatus[1].toUpperCase();
+    const limit = mLimit ? Math.min(parseInt(mLimit[1],10), 1000) : 200;
+
+    // Decide intent
+    const wantsKpi   = /\bkpi[s]?\b/.test(q);
+    const wantsChart = /\bchart|plot|graph\b/.test(q);
+    const wantsRows  = /\bshow\b|\brecords?\b/.test(q);
+
+    // fetch data once
+    const qs = new URLSearchParams();
+    if(filters.country) qs.set('country', filters.country);
+    if(filters.status)  qs.set('status',  filters.status);
+    qs.set('limit', String(limit));
+    const rows = await api('/api/data?'+qs.toString()); // uses session
+
+    // reset chart area
+    $('#chartWrap').style.display = 'none';
+    $('#answer').textContent = '';
+
+    // 1) KPIs
+    if(wantsKpi){
+      const k = computeKpis(rows);
+      $('#answer').textContent =
+        `KPIs${filters.country?` for ${filters.country}`:''}${filters.status?` [${filters.status}]`:''}: ` +
+        `total ${k.total}, delivered ${k.delivered}, failed ${k.failed}, blocked ${k.blocked}, avgLatency ${Math.round(k.avgLatency)}ms`;
+    }
+
+    // 2) Rows listing (shows in table)
+    if(wantsRows){
+      $('#tbody').innerHTML = rows.map(row).join ? rows.map(row).join('') : rows.map(r=>row(r)).join('');
+      if(!wantsKpi) { // if KPIs not requested explicitly, show quick summary line
+        const k = computeKpis(rows);
+        $('#answer').textContent = `Loaded ${rows.length} record(s). Delivered ${k.delivered}, Failed ${k.failed}, Blocked ${k.blocked}.`;
+      }
+    }
+
+    // 3) Chart(s)
+    if(wantsChart){
+      // Decide chart type by phrase
+      // - "latency by status" → bar by status
+      // - "latency by country" → bar by country
+      const byStatus  = /\bby\s+status\b/.test(q) || !/\bby\s+country\b/.test(q); // default to status
+      const groups = new Map();
+      const keyFn = byStatus ? (r)=>r.status : (r)=>r.country;
+      rows.forEach(r=>{
+        const k = keyFn(r);
+        const g = groups.get(k) || { sum:0, n:0 };
+        g.sum += r.latency_ms; g.n += 1;
+        groups.set(k,g);
+      });
+      const labels = Array.from(groups.keys()).sort();
+      const data   = labels.map(l => Math.round(groups.get(l).sum / Math.max(1,groups.get(l).n)));
+
+      renderBar(labels, data, `Average latency by ${byStatus?'status':'country'}` +
+        (filters.country && !byStatus ? ` (filtered country ${filters.country})`: '') +
+        (filters.status && byStatus ? ` (filtered status ${filters.status})`: ''));
+
+      $('#chartWrap').style.display = 'block';
+      if(!wantsKpi && !wantsRows){
+        $('#answer').textContent = `Charted ${rows.length} records: ${labels.length} groups`;
+      }
+    }
+
+    // Default if no intent matched: show KPIs + 50 rows
+    if(!wantsKpi && !wantsRows && !wantsChart){
+      const k = computeKpis(rows);
+      $('#answer').textContent = `KPIs: total ${k.total}, delivered ${k.delivered}, failed ${k.failed}, blocked ${k.blocked}, avgLatency ${Math.round(k.avgLatency)}ms`;
+      $('#tbody').innerHTML = rows.slice(0,50).map(r=>row(r)).join('');
+    }
   }
 
+  // Chart.js render
+  let chart;
+  function renderBar(labels, values, title){
+    const ctx = document.getElementById('chart').getContext('2d');
+    if(chart) chart.destroy();
+    chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ label: title, data: values }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, title: { display: true, text: title } },
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+  }
+
+  // wire up events
   $('#btnLogin').onclick = login;
   $('#btnLogout').onclick = logout;
   $('#btnLoad').onclick = loadData;
-  $('#btnAsk').onclick = askMcp;
+  $('#btnAsk').onclick = ask;
 
-  fetch('/api/me').then(r => r.json()).then(j => { if (j.authenticated) showApp(); });
+  // auto-show if session exists
+  fetch('/api/me').then(r=>r.json()).then(j=>{ if(j.authenticated) showApp(); });
 });
 </script>
-
 </body>
 </html>
