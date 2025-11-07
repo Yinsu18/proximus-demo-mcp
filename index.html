@@ -6,7 +6,7 @@
   <title>Proximus Demo</title>
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0b1020;color:#e6e8ef;margin:0}
-    .wrap{max-width:1000px;margin:40px auto;padding:16px}
+    .wrap{max-width:1100px;margin:40px auto;padding:16px}
     .card{background:#121933;border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.35);margin-bottom:16px}
     input,button,select,textarea{padding:10px 12px;border-radius:10px;border:1px solid #2a355b;background:#0f1429;color:#e6e8ef}
     button{cursor:pointer;background:#4c7dff;border-color:#4c7dff;font-weight:600}
@@ -16,24 +16,30 @@
     .pill{display:inline-block;padding:2px 8px;border:1px solid #2e3b6e;border-radius:999px;font-size:12px}
     .muted{opacity:.85}
     #chartWrap{background:#0f1429;border:1px dashed #2a355b;border-radius:12px;padding:12px;margin-top:12px}
+    .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+    .toolbar button{background:#2a355b;border-color:#2a355b}
   </style>
-  <!-- Chart.js (for on-page charts) -->
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
     <h2>Proximus Demo</h2>
+
     <div id="login">
       <div class="row">
         <input id="u" placeholder="username" value="proximus" />
         <input id="p" placeholder="password" type="password" value="proximus123" />
         <button id="btnLogin">Login</button>
       </div>
-      <p class="muted">Log in, then load data, or ask a question like:
+      <p class="muted">Examples you can ask after login:
         <br>• <code>kpis for CO</code>
         <br>• <code>show failed records for GB limit 50</code>
-        <br>• <code>chart latency by status for CO</code>
+        <br>• <code>pie chart of count by status for CO in red, green, blue</code>
+        <br>• <code>horizontal stacked bar avg latency by country split by status top 8</code>
+        <br>• <code>line chart avg latency by day</code>
+        <br>• <code>doughnut of count by carrier</code>
       </p>
     </div>
 
@@ -49,12 +55,16 @@
       <div class="card" style="margin-top:16px">
         <h3>Ask about the data</h3>
         <div class="row" style="align-items:flex-start">
-          <textarea id="q" rows="3" style="flex:1" placeholder="e.g., kpis for CO / show failed records for GB limit 50 / chart latency by status for CO"></textarea>
+          <textarea id="q" rows="3" style="flex:1" placeholder="e.g., pie chart of count by status for CO in red, green, blue"></textarea>
           <button id="btnAsk" style="height:fit-content">Run</button>
         </div>
-        <div id="answer" class="muted" style="margin-top:8px"></div>
+        <div class="toolbar">
+          <button id="btnDownloadPng">Download PNG</button>
+          <button id="btnClearChart">Clear Chart</button>
+          <span id="answer" class="muted"></span>
+        </div>
         <div id="chartWrap" style="display:none">
-          <canvas id="chart" height="140"></canvas>
+          <canvas id="chart" height="160"></canvas>
         </div>
       </div>
 
@@ -87,10 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return '<tr><td>'+dt.toLocaleString()+'</td><td>'+r.country+'</td><td>'+r.status+'</td><td>'+r.carrier+'</td><td>'+r.latency_ms+'</td></tr>';
   }
 
-  async function login(){
-    await api('/api/login','POST',{username:$('#u').value, password:$('#p').value});
-    showApp();
-  }
+  async function login(){ await api('/api/login','POST',{username:$('#u').value, password:$('#p').value}); showApp(); }
   async function logout(){ await api('/api/logout','POST'); location.reload(); }
   function showApp(){ $('#login').style.display='none'; $('#app').style.display='block'; }
 
@@ -100,9 +107,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if($('#status').value) qs.set('status',$('#status').value);
     const j = await api('/api/data?'+qs.toString());
     $('#tbody').innerHTML = j.map(row).join('');
-    // show quick KPIs of loaded table
     const k = computeKpis(j);
     $('#kpi').textContent = 'total '+k.total+' · delivered '+k.delivered+' · failed '+k.failed+' · blocked '+k.blocked+' · avgLatency '+Math.round(k.avgLatency)+'ms';
+    cache.lastRows = j;
   }
 
   function computeKpis(rows){
@@ -114,106 +121,270 @@ document.addEventListener("DOMContentLoaded", () => {
     return { total, delivered, failed, blocked, avgLatency };
   }
 
-  // --- Q&A engine (very small NL → action parser) ---
-  async function ask(){
-    const q = ($('#q').value || '').trim().toLowerCase();
-    if(!q){ $('#answer').textContent = 'Type a question.'; return; }
+  // --- Natural language → chart/summary parser ---
+  // Supports: chart types, colors, top N, horizontal, stacked, groupBy, splitBy, metric (count|avg latency), by day
+  function parseQuery(qRaw){
+    const q = (qRaw||'').toLowerCase();
 
-    // Parse filters
-    const mCountry = q.match(/\bfor\s+([a-z]{2})\b/);               // e.g., "for CO"
+    // chart type
+    let chartType = (q.match(/\b(pie|doughnut|donut|bar|line|radar|polar|polar area|polararea|area)\b/)||[])[1] || 'bar';
+    if(chartType==='donut') chartType='doughnut';
+    if(chartType==='polar area' || chartType==='polararea') chartType='polarArea';
+
+    // metric
+    let metric = /\bavg(eral)?e?\s*latency\b/.test(q) || /\bavg\b.*\blatency\b/.test(q) ? 'avg_latency' :
+                 /\blatency\b/.test(q) && /\bavg\b/.test(q) ? 'avg_latency' : 'count';
+    if(/\bcount\b/.test(q)) metric = 'count';
+
+    // grouping
+    let groupBy = (q.match(/\bby\s+(status|country|carrier|day|date)\b/)||[])[1] || 'status';
+    if(groupBy==='date') groupBy='day';
+
+    // split series (optional)
+    let splitBy = (q.match(/\bsplit\s+by\s+(status|country|carrier)\b/)||[])[1] || null;
+
+    // filters
+    const mCountry = q.match(/\bfor\s+([a-z]{2})\b/);
     const mStatus  = q.match(/\b(delivered|failed|blocked|pending)\b/);
-    const mLimit   = q.match(/\blimit\s+(\d{1,4})\b/);
-
     const filters = {};
     if(mCountry) filters.country = mCountry[1].toUpperCase();
     if(mStatus)  filters.status  = mStatus[1].toUpperCase();
-    const limit = mLimit ? Math.min(parseInt(mLimit[1],10), 1000) : 200;
 
-    // Decide intent
-    const wantsKpi   = /\bkpi[s]?\b/.test(q);
-    const wantsChart = /\bchart|plot|graph\b/.test(q);
-    const wantsRows  = /\bshow\b|\brecords?\b/.test(q);
+    // limit / top
+    const topN = (q.match(/\btop\s+(\d{1,3})\b/)||[])[1];
+    const limit = topN ? Math.min(parseInt(topN,10), 1000) : (q.match(/\blimit\s+(\d{1,4})\b/)||[])[1];
+    const lim = limit ? Math.min(parseInt(limit,10), 1000) : 200;
 
-    // fetch data once
+    // display options
+    const horizontal = /\bhorizontal\b/.test(q);
+    const stacked    = /\bstacked\b/.test(q);
+
+    // colors (comma-separated names)
+    // supports basic CSS color names; if not specified we auto-generate palette
+    let colors = null;
+    const colMatch = q.match(/\bin\s+([a-z,\s]+)$/) || q.match(/\bcolors?\s*:\s*([a-z,\s]+)\b/);
+    if(colMatch){
+      colors = colMatch[1].split(/[, ]+/).map(s=>s.trim()).filter(Boolean);
+    }
+
+    // ask types
+    const wantsChart = /\bchart|plot|graph|visual(ization)?\b/.test(q);
+    const wantsRows  = /\bshow\b|\brecords?\b|\blist\b/.test(q);
+    const wantsKpi   = /\bkpi[s]?\b/.test(q) || /summary/.test(q);
+
+    return { chartType, metric, groupBy, splitBy, filters, lim, topN: topN?parseInt(topN,10):null, horizontal, stacked, colors, wantsChart, wantsRows, wantsKpi };
+  }
+
+  // Aggregation helpers
+  function toDay(ts){ const d=new Date(ts); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0,10); }
+  function groupRows(rows, key){
+    const m=new Map();
+    const keyFn = key==='day' ? (r)=>toDay(r.timestamp) : (r)=>String(r[key]).toUpperCase();
+    rows.forEach(r=>{
+      const k = keyFn(r);
+      const g = m.get(k) || { sum:0, n:0, rows:[] };
+      g.sum += r.latency_ms; g.n += 1; g.rows.push(r);
+      m.set(k,g);
+    });
+    return m;
+  }
+
+  function sortAndTop(map, metric, topN){
+    const arr = Array.from(map.entries()).map(([k,v])=>{
+      const val = metric==='avg_latency' ? (v.sum/Math.max(1,v.n)) : v.n;
+      return { key:k, val, n:v.n, sum:v.sum, rows:v.rows };
+    });
+    arr.sort((a,b)=>b.val - a.val);
+    return typeof topN==='number' ? arr.slice(0,topN) : arr;
+  }
+
+  // Color palette generator (HSL)
+  function palette(n, baseHue=210){
+    const arr=[];
+    for(let i=0;i<n;i++){
+      const hue=(baseHue + i*360/n)%360;
+      arr.push(`hsl(${hue} 70% 55%)`);
+    }
+    return arr;
+  }
+
+  // Chart.js renderer
+  let chart;
+  function renderChart({ type, labels, datasets, horizontal=false, stacked=false, title="Report"}){
+    const ctx = document.getElementById('chart').getContext('2d');
+    if(chart) chart.destroy();
+
+    // Colors fallback
+    datasets.forEach((ds, i)=>{
+      if(!ds.backgroundColor){
+        if(Array.isArray(ds.data)){
+          const cols = palette(ds.data.length, (i*90)%360);
+          ds.backgroundColor = type==='line' ? cols[0] : cols;
+          ds.borderColor = ds.backgroundColor;
+        } else {
+          const col = palette(1,(i*90)%360)[0];
+          ds.backgroundColor = col;
+          ds.borderColor = col;
+        }
+      }
+      if(type==='line'){ ds.tension=0.3; ds.fill=false; ds.pointRadius=2; }
+    });
+
+    const options = {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true },
+        title: { display: true, text: title }
+      },
+      scales: (type==='pie'||type==='doughnut'||type==='polarArea'||type==='radar') ? {} : {
+        x: { stacked },
+        y: { stacked, beginAtZero: true }
+      },
+      indexAxis: (horizontal && (type==='bar' || type==='line')) ? 'y' : 'x'
+    };
+
+    chart = new Chart(ctx, { type, data: { labels, datasets }, options });
+    document.getElementById('chartWrap').style.display = 'block';
+  }
+
+  function formatTitle({chartType, metric, groupBy, splitBy, filters, topN}){
+    const m = metric==='avg_latency' ? 'avg latency' : 'count';
+    const parts = [`${chartType} ${m} by ${groupBy}`];
+    if(splitBy) parts.push(`split by ${splitBy}`);
+    if(filters.country) parts.push(`country=${filters.country}`);
+    if(filters.status) parts.push(`status=${filters.status}`);
+    if(topN) parts.push(`top ${topN}`);
+    return parts.join(' · ');
+  }
+
+  // --- Q&A engine (upgraded) ---
+  const cache = { lastRows: [] };
+
+  async function ask(){
+    const spec = parseQuery($('#q').value);
     const qs = new URLSearchParams();
-    if(filters.country) qs.set('country', filters.country);
-    if(filters.status)  qs.set('status',  filters.status);
-    qs.set('limit', String(limit));
-    const rows = await api('/api/data?'+qs.toString()); // uses session
+    if(spec.filters.country) qs.set('country', spec.filters.country);
+    if(spec.filters.status)  qs.set('status',  spec.filters.status);
+    qs.set('limit', String(spec.lim));
 
-    // reset chart area
-    $('#chartWrap').style.display = 'none';
+    const rows = await api('/api/data?'+qs.toString());
+    cache.lastRows = rows;
+
+    // Defaults if no explicit intent
+    if(!spec.wantsChart && !spec.wantsRows && !spec.wantsKpi){ spec.wantsChart=true; }
+
     $('#answer').textContent = '';
+    $('#chartWrap').style.display = 'none';
 
-    // 1) KPIs
-    if(wantsKpi){
+    // KPIs
+    if(spec.wantsKpi){
       const k = computeKpis(rows);
       $('#answer').textContent =
-        `KPIs${filters.country?` for ${filters.country}`:''}${filters.status?` [${filters.status}]`:''}: ` +
+        `KPIs${spec.filters.country?` for ${spec.filters.country}`:''}${spec.filters.status?` [${spec.filters.status}]`:''}: ` +
         `total ${k.total}, delivered ${k.delivered}, failed ${k.failed}, blocked ${k.blocked}, avgLatency ${Math.round(k.avgLatency)}ms`;
     }
 
-    // 2) Rows listing (shows in table)
-    if(wantsRows){
-      $('#tbody').innerHTML = rows.map(row).join ? rows.map(row).join('') : rows.map(r=>row(r)).join('');
-      if(!wantsKpi) { // if KPIs not requested explicitly, show quick summary line
+    // Rows
+    if(spec.wantsRows){
+      $('#tbody').innerHTML = rows.map(r=>row(r)).join('');
+      if(!spec.wantsKpi) {
         const k = computeKpis(rows);
         $('#answer').textContent = `Loaded ${rows.length} record(s). Delivered ${k.delivered}, Failed ${k.failed}, Blocked ${k.blocked}.`;
       }
     }
 
-    // 3) Chart(s)
-    if(wantsChart){
-      // Decide chart type by phrase
-      // - "latency by status" → bar by status
-      // - "latency by country" → bar by country
-      const byStatus  = /\bby\s+status\b/.test(q) || !/\bby\s+country\b/.test(q); // default to status
-      const groups = new Map();
-      const keyFn = byStatus ? (r)=>r.status : (r)=>r.country;
-      rows.forEach(r=>{
-        const k = keyFn(r);
-        const g = groups.get(k) || { sum:0, n:0 };
-        g.sum += r.latency_ms; g.n += 1;
-        groups.set(k,g);
-      });
-      const labels = Array.from(groups.keys()).sort();
-      const data   = labels.map(l => Math.round(groups.get(l).sum / Math.max(1,groups.get(l).n)));
+    // Charts
+    if(spec.wantsChart){
+      // Aggregate primary grouping
+      if(!['status','country','carrier','day'].includes(spec.groupBy)) spec.groupBy='status';
 
-      renderBar(labels, data, `Average latency by ${byStatus?'status':'country'}` +
-        (filters.country && !byStatus ? ` (filtered country ${filters.country})`: '') +
-        (filters.status && byStatus ? ` (filtered status ${filters.status})`: ''));
+      if(!spec.splitBy){
+        // single dataset
+        const grouped = groupRows(rows, spec.groupBy);
+        let arr = sortAndTop(grouped, spec.metric, spec.topN);
+        const labels = arr.map(x=>x.key);
+        const values = arr.map(x=> spec.metric==='avg_latency' ? Math.round(x.sum/Math.max(1,x.n)) : x.n);
 
-      $('#chartWrap').style.display = 'block';
-      if(!wantsKpi && !wantsRows){
-        $('#answer').textContent = `Charted ${rows.length} records: ${labels.length} groups`;
+        const ds = {
+          label: spec.metric==='avg_latency' ? 'Avg latency (ms)' : 'Count',
+          data: values
+        };
+
+        // colors (if given)
+        if(spec.colors && (spec.chartType==='pie' || spec.chartType==='doughnut' || spec.chartType==='polarArea')){
+          ds.backgroundColor = spec.colors;
+        } else if (spec.colors && spec.chartType!=='line'){
+          ds.backgroundColor = spec.colors;
+        }
+
+        renderChart({
+          type: spec.chartType==='area' ? 'line' : spec.chartType,
+          labels,
+          datasets: [ds],
+          horizontal: spec.horizontal,
+          stacked: spec.stacked,
+          title: formatTitle(spec)
+        });
+      } else {
+        // multi-series: splitBy
+        if(spec.splitBy===spec.groupBy){ spec.splitBy=null; return ask(); } // avoid same dim
+        const primary = groupRows(rows, spec.groupBy);
+        // Collect all secondary keys to build aligned datasets
+        const secondaryKeys = new Set();
+        const buckets = new Map(); // primaryKey -> Map(secondaryKey -> {sum,n})
+
+        rows.forEach(r=>{
+          const pk = spec.groupBy==='day' ? toDay(r.timestamp) : String(r[spec.groupBy]).toUpperCase();
+          const sk = String(r[spec.splitBy]).toUpperCase();
+          const inner = buckets.get(pk) || new Map();
+          const cell = inner.get(sk) || { sum:0, n:0 };
+          cell.sum += r.latency_ms; cell.n += 1;
+          inner.set(sk, cell);
+          buckets.set(pk, inner);
+          secondaryKeys.add(sk);
+        });
+
+        // Sort primary by metric and take topN
+        let primArr = sortAndTop(primary, spec.metric, spec.topN);
+        const labels = primArr.map(x=>x.key);
+        const secList = Array.from(secondaryKeys).sort();
+
+        // Build datasets per secondary key
+        const datasets = secList.map((sk, idx)=>{
+          const data = labels.map(pk=>{
+            const inner = buckets.get(pk);
+            const cell = inner ? inner.get(sk) : null;
+            if(!cell) return 0;
+            return spec.metric==='avg_latency' ? Math.round(cell.sum/Math.max(1,cell.n)) : cell.n;
+          });
+          const ds = { label: sk, data };
+          // color
+          if(spec.colors && spec.colors[idx]) ds.backgroundColor = spec.colors[idx];
+          return ds;
+        });
+
+        renderChart({
+          type: spec.chartType==='area' ? 'line' : spec.chartType,
+          labels,
+          datasets,
+          horizontal: spec.horizontal,
+          stacked: spec.stacked,
+          title: formatTitle(spec)
+        });
       }
-    }
-
-    // Default if no intent matched: show KPIs + 50 rows
-    if(!wantsKpi && !wantsRows && !wantsChart){
-      const k = computeKpis(rows);
-      $('#answer').textContent = `KPIs: total ${k.total}, delivered ${k.delivered}, failed ${k.failed}, blocked ${k.blocked}, avgLatency ${Math.round(k.avgLatency)}ms`;
-      $('#tbody').innerHTML = rows.slice(0,50).map(r=>row(r)).join('');
     }
   }
 
-  // Chart.js render
-  let chart;
-  function renderBar(labels, values, title){
-    const ctx = document.getElementById('chart').getContext('2d');
-    if(chart) chart.destroy();
-    chart = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [{ label: title, data: values }]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false }, title: { display: true, text: title } },
-        scales: { y: { beginAtZero: true } }
-      }
-    });
+  // Download PNG
+  function downloadPng(){
+    const canvas = document.getElementById('chart');
+    if(!canvas) return;
+    const url = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'report.png';
+    a.click();
   }
 
   // wire up events
@@ -221,6 +392,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $('#btnLogout').onclick = logout;
   $('#btnLoad').onclick = loadData;
   $('#btnAsk').onclick = ask;
+  $('#btnDownloadPng').onclick = downloadPng;
+  $('#btnClearChart').onclick = () => { const c=document.getElementById('chart'); if(c){ c.getContext('2d').clearRect(0,0,c.width,c.height);} document.getElementById('chartWrap').style.display='none'; $('#answer').textContent=''; };
 
   // auto-show if session exists
   fetch('/api/me').then(r=>r.json()).then(j=>{ if(j.authenticated) showApp(); });
